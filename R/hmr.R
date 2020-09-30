@@ -31,7 +31,7 @@
 #' @details hinput creates a subclass of HDFSpath which also contains the definition of the formatter for that path. The default formatter honors default Hadoop settings of '\t' as the key/value separator and '|' as the field separator.
 #' @note Requires properly installed Hadoop client. The installation must either be in /usr/lib/hadoop or one of HADOOP_HOME, HADOOP_PREFIX environment variables must be set accordingly.
 #' @export
-hmrtest2 <- function(input, output, map=identity, reduce=identity, job.name, aux, formatter, autoformatter=NULL, formsep=',', packages=loadedNamespaces(), reducers,
+hmr <- function(input, output, map=identity, reduce=identity, job.name, aux, formatter, autoformatter=NULL, formsep=',', packages=loadedNamespaces(), reducers,
                      wait=TRUE, hadoop.conf, hadoop.opt, R="R", verbose=TRUE, persistent=FALSE, overwrite=FALSE,
                      use.kinit = !is.null(getOption("hmr.kerberos.realm"))) {
   .rn <- function(n) paste(sprintf("%04x", as.integer(runif(n, 0, 65536))), collapse='')

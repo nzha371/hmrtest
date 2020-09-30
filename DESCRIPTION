@@ -1,4 +1,4 @@
-Package: hmapred
+Package: hmrtest
 Version: 1.2-0
 Title: High-Performance Hadoop Map/Reduce R Interface
 Author: Simon Urbanek <Simon.Urbanek@r-project.org>, Taylor Arnold <taylor.arnold@acm.org>
