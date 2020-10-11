@@ -27,7 +27,7 @@ hmr <- function(input, output, map=identity, reduce=identity, job.name, aux, for
         nr <- r[1:1e6]
         nr <- nr[1:tail(which(nr==10),1)]
         s = mstrsplit(nr, sep=sep, skip=header)
-        apply(s, 2, function(x) class(type.convert(x, as.is = TRUE)))
+        apply(s, 2, function(x) class(type.convert(x, as.is=TRUE)))
       }
       map.formatter <- function(x) dstrsplit(x, coltypes(x), sep=formsep)
     }
@@ -63,14 +63,12 @@ hmr <- function(input, output, map=identity, reduce=identity, job.name, aux, for
     #red.formatter <- .default.formatter
   if (is.null(red.formatter)) {
     if (isTRUE(redformatter)) {
-      coltypes = function(r, nsep='\t', header=TRUE) {
-        nr <- readBin(r, raw(), 1e6)
-        nr <- nr[1:tail(which(nr==10),1)]
-        s = mstrsplit(nr, nsep=nsep, skip=header)
+      redcol = function(r, nsep="\t", header=FALSE) {
+        s = mstrsplit(r, nsep=nsep)
         apply(s, 2, function(x) class(type.convert(x, as.is = TRUE)))
       }
       red.formatter <- function(x) {
-        y = mstrsplit(x, type=coltypes(x), nsep='\t')
+        y = mstrsplit(x, type=redcol(x), nsep="\t")
         if (ncol(y) == 1L)
           y[, 1]
         else y
