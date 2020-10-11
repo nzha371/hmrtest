@@ -1,38 +1,6 @@
-#' @title hmrtest2
-#' @description runs hadoop map reduce in R
-#' @description hmr runs a chunk-wise Hadoop job.
-#' @description hpath and hinput define HDFS file path and input source.
-#' @param input input data - see details
-#' @param output output path (optional)
-#' @param map chunk compute function (map is a misnomer)
-#' @param reduce chunk combine function
-#' @param job.name name of the job to pass to Hadoop
-#' @param aux either a character vector of symbols names or a named list of values to push to the compute nodes
-#' @param formatter formatter to use. It is optional in hmr if the input source already contains a formatter definition. See below for details on how to sepcify separate formatters.
-#' @param autoformatter provides two alternative methods of detection if formatter is not specified. If TRUE then the functions uses dynamic detection and FALSE performs the detection in advance.
-#' @param formsep specifies the separator for the formatter, default is comma
-#' @param packages character vector of package names to attach on the compute nodes
-#' @param reducers optional integer specifying the number of parallel jobs in the combine step. It is a hint in the sense that any number greater than one implies independence of the chunks in the combine step. Default is to not assume independence.
-#' @param wait logical, if TRUE then the command returns after the job finished, otherwise the command returns after the job has been submitted
-#' @param hadoop.conf optional string, path to the hadoop configuration directory for submission
-#' @param hadoop.opt additional Java options to pass to the job - named character vectors are passed as -D<name>=<value>, unnamed vectors are collapsed. Note: this is only a transitional interface to work around deficiencies in the job generation and should only be used as a last measure since the semantics is implementation specific and thus not prtable across systems.
-#' @param R command to call to run R on the Hadoop cluster
-#' @param verbose logical, indicating whether the output sent to standard error and standard out from hadoop should be printed to the console.
-#' @param persistent logical, if TRUE then an ROctopus job is started and the mapper is executed in "hot" ROctopus instances instead of regular R. The results in that case are ROctopus URLs.
-#' @param overwrite logical, if TRUE then the output directory is first deleted before the job is started.
-#' @param use.kinit logical, if TRUE automatically invokes kinit(realm=getOption("hmr.kerberos.realm")) before running any Hadoop commands.
-#' @param path HDFS path
-#' @return hmr returns the HDFS path to the result when finished.
-#' @return hpath returns a character vector of class "HDFSpath"
-#' @return hinput returns a subclass "hinput" of "HDFSpath" containing the additional "formatter" attribute.
-#' @details hmr creates and runs a Hadoop job to perform chunkwise compute + combine. The input is read using chunk.reader, processed using the formatter function and passed to the map function. The result is converted using as.output before going back to Hadoop. The chunkwise results are combined using the reduce function - the flow is the same as in the map case. Then result is returned as HDFS path. Either map or reduce can be identity (the default).
-#' @details If the formatter if omitted then the format is taken from input object (if it has one) or the default formatter (mstrsplit with '\t' as key spearator, '|' as column separator) is used. If formater is a function then the same formatter is used for both the map and reduce steps. If separate formatters are required, the formatter can be a list with the entries map and/or reduce specifying the corresponding formatter function.
-#' @details hpath tags a string as HDFS path. The sole purpose here is to distiguish local and HDFS paths.
-#' @details hinput creates a subclass of HDFSpath which also contains the definition of the formatter for that path. The default formatter honors default Hadoop settings of '\t' as the key/value separator and '|' as the field separator.
-#' @note Requires properly installed Hadoop client. The installation must either be in /usr/lib/hadoop or one of HADOOP_HOME, HADOOP_PREFIX environment variables must be set accordingly.
-#' @export
-hmr <- function(input, output, map=identity, reduce=identity, job.name, aux, formatter, autoformatter=NULL, formsep=',', packages=loadedNamespaces(), reducers,
-                     wait=TRUE, hadoop.conf, hadoop.opt, R="R", verbose=TRUE, persistent=FALSE, overwrite=FALSE,
+hmr <- function(input, output, map=identity, reduce=identity, job.name, aux, formatter, autoformatter=NULL, formsep=',',
+                     redformatter=NULL, packages=loadedNamespaces(), reducers, wait=TRUE, hadoop.conf,
+                     hadoop.opt, R="R", verbose=TRUE, persistent=FALSE, overwrite=FALSE,
                      use.kinit = !is.null(getOption("hmr.kerberos.realm"))) {
   .rn <- function(n) paste(sprintf("%04x", as.integer(runif(n, 0, 65536))), collapse='')
   if (missing(output)) output <- hpath(sprintf("/tmp/io-hmr-temp-%d-%s", Sys.getpid(), .rn(4)))
@@ -56,7 +24,9 @@ hmr <- function(input, output, map=identity, reduce=identity, job.name, aux, for
   if (missing(formatter) || is.null(map.formatter)) {
     if (isTRUE(autoformatter)) {
       coltypes = function(r, sep=formsep, nsep=NA, header=TRUE) {
-        s = mstrsplit(r, sep=sep, skip=header)
+        nr <- r[1:1e6]
+        nr <- nr[1:tail(which(nr==10),1)]
+        s = mstrsplit(nr, sep=sep, skip=header)
         apply(s, 2, function(x) class(type.convert(x, as.is = TRUE)))
       }
       map.formatter <- function(x) dstrsplit(x, coltypes(x), sep=formsep)
@@ -89,8 +59,25 @@ hmr <- function(input, output, map=identity, reduce=identity, job.name, aux, for
     else map.formatter <- .default.formatter
   }
 
-  if (is.null(red.formatter))
-    red.formatter <- .default.formatter
+  #if (is.null(red.formatter))
+    #red.formatter <- .default.formatter
+  if (is.null(red.formatter)) {
+    if (isTRUE(redformatter)) {
+      coltypes = function(r, nsep='\t', header=TRUE) {
+        nr <- readBin(r, raw(), 1e6)
+        nr <- nr[1:tail(which(nr==10),1)]
+        s = mstrsplit(nr, nsep=nsep, skip=header)
+        apply(s, 2, function(x) class(type.convert(x, as.is = TRUE)))
+      }
+      red.formatter <- function(x) {
+        y = mstrsplit(x, type=coltypes(x), nsep='\t')
+        if (ncol(y) == 1L)
+          y[, 1]
+        else y
+      }
+    }
+    else red.formatter <- .default.formatter
+  }
 
   h <- .hadoop.detect()
   hh <- h$hh
