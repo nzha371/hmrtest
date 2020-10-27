@@ -1,6 +1,6 @@
-hmr <- function(input, output, map=identity, reduce=identity, job.name, aux, formatter, autoformatter=NULL, formsep=',',
-                     redformatter=NULL, packages=loadedNamespaces(), reducers, wait=TRUE, hadoop.conf,
-                     hadoop.opt, R="R", verbose=TRUE, persistent=FALSE, overwrite=FALSE,
+hmr <- function(input, output, map=identity, reduce=identity, job.name, aux, formatter, mapformatter=NA,
+                redformatter=NA, formsep=',', size=1e6, packages=loadedNamespaces(), reducers, wait=TRUE,
+                hadoop.conf, hadoop.opt, R="R", verbose=TRUE, persistent=FALSE, overwrite=FALSE,
                      use.kinit = !is.null(getOption("hmr.kerberos.realm"))) {
   .rn <- function(n) paste(sprintf("%04x", as.integer(runif(n, 0, 65536))), collapse='')
   if (missing(output)) output <- hpath(sprintf("/tmp/io-hmr-temp-%d-%s", Sys.getpid(), .rn(4)))
@@ -8,6 +8,44 @@ hmr <- function(input, output, map=identity, reduce=identity, job.name, aux, for
   if (!inherits(input, "HDFSpath")) stop("Sorry, you have to have the input in HDFS for now")
   ## only use kinit if use.kinit and all tickets expired
   if (isTRUE(use.kinit) && all(krb5::klist()$expired)) krb5::kinit(realm=getOption("hmr.kerberos.realm"))
+  ## dynamic approach
+  coltypes = function(r, sep=formsep, nsep='\t', nrowsClasses=25, chunksize=size, header=TRUE) {
+    nr <- r[1:chunksize]
+    nr <- nr[1:tail(which(nr==10),1)]
+    subset = mstrsplit(nr, sep=sep, nsep=nsep, nrows=nrowsClasses, skip=header)
+    colClasses = apply(subset, 2, function(x) class(type.convert(x, as.is=TRUE)))
+    if (header) {
+      col_names = mstrsplit(nr, sep=sep, nsep=nsep, nrows=1)
+      if ((length(col_names) - 1 == length(colClasses)) && !is.na(nsep))
+        col_names = col_names[-1]
+      names(colClasses) = col_names
+    }
+    colClasses
+  }
+  ## static approach
+  guess <- function(path, sep=formsep, nsep='\t', nrowsClasses=25L, chunksize=size, header=TRUE) {
+    f <- pipe(paste("hadoop fs -cat", shQuote(path)), "rb")
+    cr <- chunk.reader(f)
+    r <- read.chunk(cr, chunksize)
+    subset = mstrsplit(r, sep=sep, nsep=nsep, nrows=nrowsClasses, skip=header)
+    colClasses = rep(NA_character_, ncol(subset))
+    for (i in 1:ncol(subset))
+      colClasses[i] = class(type.convert(subset[,i],as.is=TRUE))
+    # If all NA's, R makes it logical; better to be character
+    index = which(apply(!is.na(subset), 2, sum) == 0)
+    if (length(index))
+      colClasses[index] = "character"
+    if (header) {
+      col_names = mstrsplit(r, sep=sep, nsep=nsep, nrows=1)
+      if ((length(col_names) - 1 == length(colClasses)) && !is.na(nsep))
+        col_names = col_names[-1]
+      names(colClasses) = col_names
+    }
+    close(f)
+    rm(list=c("cr", "r", "f"))
+    function(x) dstrsplit(x, colClasses, sep=sep, nsep=nsep, skip=header)
+  }
+
   map.formatter <- NULL
   red.formatter <- NULL
   #if (missing(formatter) && inherits(input, "hinput"))
@@ -18,62 +56,22 @@ hmr <- function(input, output, map=identity, reduce=identity, job.name, aux, for
       red.formatter <- formatter$reduce
     } else map.formatter <- red.formatter <- formatter
   }
+  else { #(missing(formatter)) || is.null(map.formatter)) {
+    if (isTRUE(mapformatter))
+      map.formatter <- function(x) dstrsplit(x, coltypes(x, nsep=NA), sep=formsep)
+    else if (!isTRUE(mapformatter))   #isFALSE introduced after 3.5
+      map.formatter <- guess(paste0(input,"/*"), nsep=NA)
+    else map.formatter <- .default.formatter
+  }
   ## this could be true with formatter=list(reduce=...) in which case we still use the one from input
   #if (is.null(map.formatter) && inherits(input, "hinput"))
   #map.formatter <- attr(input, "formatter")
-  if (missing(formatter) || is.null(map.formatter)) {
-    if (isTRUE(autoformatter)) {
-      coltypes = function(r, sep=formsep, nsep=NA, header=TRUE) {
-        nr <- r[1:1e6]
-        nr <- nr[1:tail(which(nr==10),1)]
-        s = mstrsplit(nr, sep=sep, skip=header)
-        apply(s, 2, function(x) class(type.convert(x, as.is=TRUE)))
-      }
-      map.formatter <- function(x) dstrsplit(x, coltypes(x), sep=formsep)
-    }
-    else if (autoformatter==FALSE) { #isFALSE introduced after 3.5
-      guess <- function(path, sep='|', nsep='\t', nrowsClasses=25L, header=TRUE) {
-        f <- pipe(paste("hadoop fs -cat", shQuote(path)), "rb")
-        cr <- chunk.reader(f)
-        r <- read.chunk(cr, 1e6)
-        subset = mstrsplit(r, sep=sep, nsep=nsep, nrows=nrowsClasses, skip=header)
-        colClasses = rep(NA_character_, ncol(subset))
-        for (i in 1:ncol(subset))
-          colClasses[i] = class(type.convert(subset[,i],as.is=TRUE))
-        # If all NA's, R makes it logical; better to be character
-        index = which(apply(!is.na(subset), 2, sum) == 0)
-        if (length(index))
-          colClasses[index] = "character"
-        if (header) {
-          col_names = mstrsplit(r, sep=sep, nsep=nsep, nrows=1)
-          if ((length(col_names) - 1 == length(colClasses)) && !is.na(nsep))
-            col_names = col_names[-1]
-          names(colClasses) = col_names
-        }
-        close(f)
-        rm(list=c("cr", "r", "f"))
-        function(x) dstrsplit(x, colClasses, sep=sep, nsep=nsep, skip=header)
-      }
-      map.formatter <- guess(paste0(input,"/*"), sep=formsep, nsep=NA)
-    }
-    else map.formatter <- .default.formatter
-  }
 
-  #if (is.null(red.formatter))
-    #red.formatter <- .default.formatter
-  if (is.null(red.formatter)) {
-    if (isTRUE(redformatter)) {
-      redcol = function(r, nsep="\t", header=FALSE) {
-        s = mstrsplit(r, nsep=nsep)
-        apply(s, 2, function(x) class(type.convert(x, as.is = TRUE)))
-      }
-      red.formatter <- function(x) {
-        y = mstrsplit(x, type=redcol(x), nsep="\t")
-        if (ncol(y) == 1L)
-          y[, 1]
-        else y
-      }
-    }
+  if (is.null(red.formatter)) { #is this needed?
+    if (isTRUE(redformatter))
+      red.formatter <- function(x) dstrsplit(x, coltypes(x, sep=NA, header=FALSE), nsep='\t')
+    #else if (!isTRUE(redformatter)) {
+      #map.formatter <- guess(paste0(input,"/*"))
     else red.formatter <- .default.formatter
   }
 
