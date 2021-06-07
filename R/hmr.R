@@ -1,4 +1,4 @@
-hmr <- function(input, output, map=identity, reduce=identity, job.name, aux, formatter, autoformatter,
+hmr <- function(input, output, map=identity, reduce=identity, job.name, aux, formatter, auto.formatter,
                 formsep=',', size=1e6, packages=loadedNamespaces(), reducers, wait=TRUE,
                 hadoop.conf, hadoop.opt, R="R", verbose=TRUE, persistent=FALSE, overwrite=FALSE,
                 use.kinit = !is.null(getOption("hmr.kerberos.realm"))) {
@@ -9,12 +9,8 @@ hmr <- function(input, output, map=identity, reduce=identity, job.name, aux, for
   ## only use kinit if use.kinit and all tickets expired
   if (isTRUE(use.kinit) && all(krb5::klist()$expired)) krb5::kinit(realm=getOption("hmr.kerberos.realm"))
   ## dynamic approach
-  coltypes = function(r, sep=formsep, nsep='\t', nrowsClasses=25L, chunksize=size, header=TRUE) {
-    if (sum(r==10) < nrowsClasses) {
-      nrowsClasses = sum(r==10)
-      r <- r[1:chunksize]
-      r <- r[1:tail(which(r==10),1)]
-    }
+  coltypes <- function(r, sep=formsep, nsep='\t',
+                       nrowsClasses=25L, header=TRUE) {
     subset = mstrsplit(r, sep=sep, nsep=nsep, nrows=nrowsClasses, skip=header)
     colClasses = apply(subset, 2, function(x) class(type.convert(x, as.is=TRUE)))
     if (header) {
@@ -26,7 +22,7 @@ hmr <- function(input, output, map=identity, reduce=identity, job.name, aux, for
     colClasses
   }
   ## new static approach
-  guess <- function(path, chunksize=size, header=TRUE, map) {
+  guess <- function(path, chunksize=size, header=TRUE, map, map.formatter=attr(input, "formatter")) {
     f <- pipe(paste("hadoop fs -cat", shQuote(path)), "rb")
     cr <- chunk.reader(f)
     r <- read.chunk(cr, chunksize)
@@ -38,8 +34,11 @@ hmr <- function(input, output, map=identity, reduce=identity, job.name, aux, for
       if (length(c) == length(names(m)))
         names(c) = names(m)
       rm(list=c("cr", "r", "f"))
-      list(map=function(x) dstrsplit(x, colClasses, sep=formsep, skip=header),
-           reduce=function(x) dstrsplit(x, c, sep="|", nsep="\t", skip=FALSE))
+      if (is.null(map.formatter))
+        list(map=function(x) dstrsplit(x, colClasses, sep=formsep, skip=header),
+             reduce=function(x) dstrsplit(x, c, sep="|", nsep="\t", skip=FALSE))
+      else list(map=map.formatter,
+                reduce=function(x) dstrsplit(x, c, sep="|", nsep="\t", skip=FALSE))
     }
     else function(x) dstrsplit(x, colClasses, sep=formsep, skip=header)
   }
@@ -54,27 +53,28 @@ hmr <- function(input, output, map=identity, reduce=identity, job.name, aux, for
     }
     else map.formatter <- red.formatter <- formatter
   }
+  if (missing(auto.formatter)) {
+    if (inherits(input, "hinput"))
+      map.formatter <- attr(input, "formatter")
+    if (is.null(map.formatter)) map.formatter <- .default.formatter
+    if (is.null(red.formatter)) red.formatter <- .default.formatter
+  }
   else {
-    if (missing(autoformatter)) {
-      if (inherits(input, "hinput"))
+    if (isTRUE(auto.formatter)) {
+      if (inherits(input, "hinput")) {
         map.formatter <- attr(input, "formatter")
-      if (is.null(map.formatter)) map.formatter <- .default.formatter
-      if (is.null(red.formatter)) red.formatter <- .default.formatter
+      }
+      else map.formatter <- function(x) dstrsplit(x, coltypes(x), sep=formsep, skip=TRUE)
+      if (!missing(reduce))
+        red.formatter <- function(x) dstrsplit(x, coltypes(x, header=FALSE), nsep='\t')
     }
-    else {
-      if (isTRUE(autoformatter)) {
-        map.formatter <- function(x) dstrsplit(x, coltypes(x), sep=formsep, skip=TRUE)
-        if (!missing(reduce))
-          red.formatter <- function(x) dstrsplit(x, coltypes(x, header=FALSE), nsep='\t')
+    else if (auto.formatter==FALSE) {
+      if (!missing(reduce)) {
+        formatter <- guess(paste0(input,"/*"), map=map)
+        map.formatter <- formatter$map
+        red.formatter <- formatter$reduce
       }
-      else if (autoformatter==FALSE) {
-        if (!missing(reduce)) {
-          formatter <- guess(paste0(input,"/*"), map=map)
-          map.formatter <- formatter$map
-          red.formatter <- formatter$reduce
-        }
-        else map.formatter <- guess(paste0(input,"/*"))
-      }
+      else map.formatter <- guess(paste0(input,"/*"))
     }
   }
 
