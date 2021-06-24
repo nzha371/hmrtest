@@ -1,5 +1,5 @@
 hmr <- function(input, output, map=identity, reduce=identity, job.name, aux, formatter, auto.formatter,
-                formsep=',', size=1e6, packages=loadedNamespaces(), reducers, wait=TRUE,
+                map.sep=',', red.sep='|', header=TRUE, size=1e6, packages=loadedNamespaces(), reducers, wait=TRUE,
                 hadoop.conf, hadoop.opt, R="R", verbose=TRUE, persistent=FALSE, overwrite=FALSE,
                 use.kinit = !is.null(getOption("hmr.kerberos.realm"))) {
   .rn <- function(n) paste(sprintf("%04x", as.integer(runif(n, 0, 65536))), collapse='')
@@ -9,8 +9,8 @@ hmr <- function(input, output, map=identity, reduce=identity, job.name, aux, for
   ## only use kinit if use.kinit and all tickets expired
   if (isTRUE(use.kinit) && all(krb5::klist()$expired)) krb5::kinit(realm=getOption("hmr.kerberos.realm"))
   ## dynamic approach
-  coltypes <- function(r, sep=formsep, nsep='\t',
-                       nrowsClasses=25L, header=TRUE) {
+  coltypes <- function(r, sep=map.sep, nsep='\t',
+                       nrowsClasses=25L, chunksize=size, header=header) {
     subset = mstrsplit(r, sep=sep, nsep=nsep, nrows=nrowsClasses, skip=header)
     colClasses = apply(subset, 2, function(x) class(type.convert(x, as.is=TRUE)))
     if (header) {
@@ -22,25 +22,25 @@ hmr <- function(input, output, map=identity, reduce=identity, job.name, aux, for
     colClasses
   }
   ## new static approach
-  guess <- function(path, chunksize=size, header=TRUE, map, map.formatter=attr(input, "formatter")) {
+  guess <- function(path, chunksize=size, header=header, map, map.formatter=attr(input, "formatter")) {
     f <- pipe(paste("hadoop fs -cat", shQuote(path)), "rb")
     cr <- chunk.reader(f)
     r <- read.chunk(cr, chunksize)
     colClasses = coltypes(r)
     close(f)
     if (!missing(map)) {
-      m = map(dstrsplit(r, colClasses, sep=formsep, skip=header))
-      c = coltypes(as.output(m), header=FALSE)
+      m = map(dstrsplit(r, colClasses, sep=map.sep, skip=header))
+      c = coltypes(as.output(m), header=FALSE, sep=red.sep)
       if (length(c) == length(names(m)))
         names(c) = names(m)
       rm(list=c("cr", "r", "f"))
       if (is.null(map.formatter))
-        list(map=function(x) dstrsplit(x, colClasses, sep=formsep, skip=header),
-             reduce=function(x) dstrsplit(x, c, sep="|", nsep="\t", skip=FALSE))
+        list(map=function(x) dstrsplit(x, colClasses, sep=map.sep, skip=header),
+             reduce=function(x) dstrsplit(x, c, sep=red.sep, nsep="\t", skip=FALSE))
       else list(map=map.formatter,
-                reduce=function(x) dstrsplit(x, c, sep="|", nsep="\t", skip=FALSE))
+                reduce=function(x) dstrsplit(x, c, sep=red.sep, nsep="\t", skip=FALSE))
     }
-    else function(x) dstrsplit(x, colClasses, sep=formsep, skip=header)
+    else function(x) dstrsplit(x, colClasses, sep=map.sep, skip=header)
   }
 
   ## formatter logic
@@ -64,9 +64,9 @@ hmr <- function(input, output, map=identity, reduce=identity, job.name, aux, for
       if (inherits(input, "hinput")) {
         map.formatter <- attr(input, "formatter")
       }
-      else map.formatter <- function(x) dstrsplit(x, coltypes(x), sep=formsep, skip=TRUE)
+      else map.formatter <- function(x) dstrsplit(x, coltypes(x), sep=map.sep, skip=TRUE)
       if (!missing(reduce))
-        red.formatter <- function(x) dstrsplit(x, coltypes(x, header=FALSE), nsep='\t')
+        red.formatter <- function(x) dstrsplit(x, coltypes(x, header=FALSE, sep=red.sep), nsep='\t')
     }
     else if (auto.formatter==FALSE) {
       if (!missing(reduce)) {
