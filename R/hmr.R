@@ -21,7 +21,7 @@ hmr <- function(input, output, map=identity, reduce=identity, job.name, aux, for
     }
     colClasses
   }
-  ## new static approach
+  ## static approach
   guess <- function(path, chunksize=size, header=dheader, map, map.formatter=attr(input, "formatter")) {
     if (missing(map) && !is.null(map.formatter)) return(map.formatter)
     f <- pipe(paste("hadoop fs -cat", shQuote(path)), "rb")
@@ -37,7 +37,6 @@ hmr <- function(input, output, map=identity, reduce=identity, job.name, aux, for
       if (length(c) == length(names(m)))
         names(c) = names(m)
       rm(list=c("cr", "r", "f"))
-
       list(map=map.formatter,
            reduce=function(x) dstrsplit(x, c, sep=red.sep, nsep="\t", skip=FALSE))
     } else function(x) dstrsplit(x, colClasses, sep=map.sep, skip=header)
