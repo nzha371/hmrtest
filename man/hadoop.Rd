@@ -35,8 +35,8 @@ hinput(path, formatter = .default.formatter)
     input source already contains a formatter definition. See below for
     details on how to specify separate formatters.}
   \item{auto.formatter}{which auto detection to use for the Mapper and Reducer.
-    If argument is set to TRUE, the dynamic approach will be executed.
-    If argument is set to FALSE, the statis approach will be executed.
+    If argument is set to \code{TRUE}, the dynamic approach will be executed.
+    If argument is set to \code{FALSE}, the statis approach will be executed.
     If the argument is not set and the user has not provided a formatter,
     the default formatter will be executed.}
   \item{map.sep}{separator for the map formatter. Default is set to a
@@ -44,7 +44,7 @@ hinput(path, formatter = .default.formatter)
   \item{red.sep}{separator for the reduce formatter. Default is set to
     a pipe separator.}
   \item{dheader}{twhether data contain a header in the first line.
-    Default is set to TRUE.}
+    Default is set to \code{TRUE}.}
   \item{size} {size of input data to subset on. Default is set at 1
     million bytes.}
   \item{packages}{character vector of package names to attach on the
